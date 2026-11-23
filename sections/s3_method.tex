@@ -1,0 +1,213 @@
+\section{Methodology}
+\label{sec:method}
+
+% In this section, we detail our \ourmethod framework, a semantic guidance method that leverages a vision-language model (VLM) as a semantic planner to enhance the instruction grounding capacity of world-action models.
+% We first give an overview of the overall formulation.
+% We then present its two core components, the semantic planner and the
+% semantic-guided world-action model, and finally the three-stage training
+% paradigm.
+\subsection{Overview}
+\label{sec:method_overview}
+As shown in Figure~\ref{fig:overview}, the VLM planner takes the current observation $\mathbf{o}_t$ and the language
+instruction $\ell$, together with a set of learnable query tokens.
+From the hidden states of these query tokens, it predicts two dense feature maps for future keyframes: $\hat{\mathbf{F}}_{\mathrm{tg}}$ grounds the instruction on the task-relevant objects, and $\hat{\mathbf{F}}_{\mathrm{spa}}$ captures the
+scene geometry required for precise manipulation.
+During training, the two maps are supervised by frozen teacher encoders that
+provide target features from future frames, driving the query states to
+anticipate how the scene should evolve.
+
+The world-action model, which couples a video expert with an action expert, generates the future video $\mathbf{o}_{t+1:t+T}$ of $T$ frames and the action chunk $\mathbf{a}_{t:t+H-1}$ of $H$ steps under the guidance of this foresight. We model the resulting conditional distribution as
+\begin{equation}
+    p_{\theta}\!\left(
+        \mathbf{a}_{t:t+H-1},\,
+        \mathbf{o}_{t+1:t+T}
+        \,\middle|\,
+        \mathbf{o}_t,\ell,\mathbf{s}_t,
+        \hat{\mathbf{F}}_{\mathrm{tg}},
+        \hat{\mathbf{F}}_{\mathrm{spa}}
+    \right),
+    \label{eq:wam_overview}
+\end{equation}
+where $\theta$ denotes the model parameters and $\mathbf{s}_t$ is the robot state that the action expert receives.
+
+We train the model in three stages: we first train the semantic planner alone to
+predict the semantic guidance of future keyframes, then co-train it with the
+video expert, and finally add the action expert.
+At inference, we discard the teacher encoders, and a single planner forward pass supplies
+the foresight that guides generation.
+
+\subsection{Semantic Foresight Learning}
+\label{sec:method_planner}
+
+We instantiate the semantic planner with Qwen3.5~\cite{qwen35}.
+To predict future features in a single forward pass, we append learnable query
+tokens to the image--instruction sequence and take their hidden states.
+To capture the semantic knowledge shared by the text-grounded and spatial-aware
+targets, we split the tokens into a base group and two modality-specific groups.
+Both branches read the base group, while each modality-specific group captures
+only what its own target requires.
+Branch $m$ then reads the concatenated states
+$\mathbf{H}_m=[\mathbf{H}_{\mathrm{base}};\mathbf{H}_m^{\mathrm{spec}}]$.
+We reuse the same tokens for $K$ future keyframes at increasing offsets, so the
+foresight covers a horizon instead of a single instant.
+The planner is applied to each camera view independently and with shared
+weights, so the same instruction is grounded separately in every view.
+A lightweight resampler $\mathcal{R}_m$ then decodes each $\mathbf{H}_m$ into a
+dense feature map.
+To produce this map, a bank of $P$ learnable grid queries $\mathbf{U}_m$
+cross-attends to $\mathbf{H}_m$ and the image states $\mathbf{E}$.
+By attending to both sources, the resampler recovers fine spatial details from the observation while the query states specify how it should change:
+\begin{equation}
+    \revcolor
+    \hat{\mathbf{F}}_m^{(k,v)}
+    =
+    \mathcal{R}_m\!\left([\mathbf{E}^{(v)};\mathbf{H}_m^{(k,v)}],\,\mathbf{U}_m\right)
+    \in\mathbb{R}^{P\times d_m},
+    \label{eq:resampler}
+\end{equation}
+where $m\in\{\mathrm{tg},\mathrm{spa}\}$ indexes the two semantic branches\rev{, $k\in\{1,\dots,K\}$ indexes the future keyframe, and $v\in\{1,\dots,V\}$ indexes the camera view; $\mathbf{E}^{(v)}$ are the image states of view $v$, and $\mathbf{H}_m^{(k,v)}$ are the query states read out at the positions of keyframe $k$ in the sequence of view $v$. The query embeddings and $\mathbf{U}_m$ are shared across $k$ and $v$}.
+Both maps use $P{=}256$ tokens to match the token layout of the two teachers, and the feature dimension $d_m$ is $1024$ for the
+text-grounded map and $2048$ for the spatial-aware map.
+
+Two frozen teachers supervise these predictions using features extracted from the actual future frames.
+The text-grounded target $\mathbf{F}_{\mathrm{tg}}$ comes from the
+penultimate-layer patch tokens of SigLIP2~\cite{siglip2}, which provides a language-aligned visual feature space with dense spatial structure.
+\rev{These targets are computed from the future images only; the language dependence of $\hat{\mathbf{F}}_{\mathrm{tg}}$ comes from the instruction in the planner input, which is the sense in which we call this branch text-grounded (Sec.~\ref{sec:intro}).}
+The spatial-aware target $\mathbf{F}_{\mathrm{spa}}$ comes from the dense
+features of Depth Anything~3~\cite{lin2025depth}, which encode object layout,
+surface geometry, and relative distances.
+We align to these features rather than directly regressing raw depth, so that geometry is represented in a dense-token format before both branches are projected into a common guidance space.
+With both targets detached, the planner is optimized to match them:
+\begin{equation}
+    \revcolor
+    \mathcal{L}_{\mathrm{plan}}
+    =
+    \frac{1}{KV}\sum_{k=1}^{K}\sum_{v=1}^{V}
+    \Big[
+    \operatorname{MSE}\big(\hat{\mathbf{F}}_{\mathrm{tg}}^{(k,v)},\mathbf{F}_{\mathrm{tg}}^{(k,v)}\big)
+    +
+    \lambda_{\mathrm{spa}}
+    \operatorname{SL_1}\big(\hat{\mathbf{F}}_{\mathrm{spa}}^{(k,v)},\mathbf{F}_{\mathrm{spa}}^{(k,v)}\big)
+    \Big],
+    \label{eq:planner_loss}
+\end{equation}
+where $\operatorname{MSE}$ and $\operatorname{SL_1}$ denote the mean-squared and
+smooth-$L_1$ losses, both averaged over tokens and feature channels,
+$\lambda_{\mathrm{spa}}$ balances the two terms, and \rev{$\mathbf{F}_m^{(k,v)}$ is the teacher feature of view $v$ at the $k$-th future keyframe, so the loss is averaged over the $K$ predicted keyframes and the $V$ camera views}.
+
+\subsection{Semantic-Guided World-Action Model}
+\label{sec:method_guidance}
+
+We build the world-action model on a pretrained video diffusion model and couple
+its video expert with an action expert through joint
+attention~\cite{genieenvisioner,fastwam}.
+To condition it on the predicted foresight, we fuse the text-grounded and
+spatial-aware maps into a single guidance representation $\mathbf{Z}$ through a
+learned gate:
+\begin{equation}
+    \mathbf{Z}
+    =
+    \operatorname{Proj}_{\mathrm{tg}}(\hat{\mathbf{F}}_{\mathrm{tg}})
+    +
+    \sigma(g)\,
+    \operatorname{Proj}_{\mathrm{spa}}(\hat{\mathbf{F}}_{\mathrm{spa}}),
+    \label{eq:fusion}
+\end{equation}
+where $\operatorname{Proj}_{\mathrm{tg}}$ and $\operatorname{Proj}_{\mathrm{spa}}$ are
+linear projections into the guidance space, $\sigma$ is the sigmoid function, and
+$g$ is a learnable scalar gate.
+Rather than replacing the original text conditioning, we retain the original text cross-attention and inject $\mathbf{Z}$ into every block of the video expert through an additional parallel cross-attention branch. 
+Each guidance token carries a positional encoding of its keyframe time and spatial
+location, so it guides the region it describes.
+To amplify the effect of the guidance at inference through classifier-free
+guidance, we randomly drop the guidance during training so that the model also
+learns to generate without it.
+The action expert needs no direct injection, since it inherits the guidance
+through its joint attention with the video expert.
+Both experts are trained with a flow-matching objective.
+For each expert, we form $\mathbf{x}_\tau=(1-\tau)\mathbf{y}+\tau\boldsymbol{\epsilon}$
+from the clean target $\mathbf{y}$ and Gaussian noise $\boldsymbol{\epsilon}$ at a
+sampled time $\tau\in[0,1]$, and regress the velocity
+$\mathbf{u}=\boldsymbol{\epsilon}-\mathbf{y}$:
+\begin{equation}
+    \mathcal{L}_{\mathrm{gen}}
+    =
+    \underbrace{\mathbb{E}\big\|\hat{\mathbf{v}}_{\mathrm{vid}}-\mathbf{u}_{\mathrm{vid}}\big\|_2^2}_{\mathcal{L}_{\mathrm{vid}}}
+    +
+    \lambda_{\mathrm{act}}\,
+    \underbrace{\mathbb{E}\big\|\hat{\mathbf{v}}_{\mathrm{act}}-\mathbf{u}_{\mathrm{act}}\big\|_2^2}_{\mathcal{L}_{\mathrm{act}}}.
+    \label{eq:gen_loss}
+\end{equation}
+Here $\hat{\mathbf{v}}$ denotes the velocity predicted by each expert, the
+subscripts $\mathrm{vid}$ and $\mathrm{act}$ refer to the video and action
+experts, and $\lambda_{\mathrm{act}}$ balances the two terms.
+\TODO{State the normalization of $\mathbf{y}_{\mathrm{vid}}$ and $\mathbf{y}_{\mathrm{act}}$ that gives $\lambda_{\mathrm{act}}{=}1$ its meaning (e.g., per-channel standardized VAE latents; per-dimension standardized actions).}
+% Evidence (line A, HPC3 SG-WAM): pixels -> [-1,1] (ge_act/data/libero_fastwam_hdf5_dataset.py:478); latents (z-mean)/std per channel with LTX VAE
+% latents_mean/latents_std, scaling_factor 1.0 (ge_act/utils/data_utils.py:201,242-252). Actions/state: per-suite per-dimension z-score, std+1e-6
+% (libero_fastwam_hdf5_dataset.py:237-270,482-485; stats ge_act/configs/ltx_model/libero/libero_fastwam_mix.json {suite}_eef / {suite}_state_eef;
+% absolute 7-D EEF actions). Older loader data/libero_dataset.py:326,442 uses q01/q99 min-max to [-1,1]; which one the paper's run used is unconfirmed.
+
+\subsection{Three-Stage Training Paradigm}
+\label{sec:method_training}
+
+\paragraph{Stage 1: Semantic Planner Pre-training.}
+From only the current frame and the instruction, the planner must reproduce the
+dense features that the frozen teachers extract from the $K$ future keyframes.
+We optimize the query-token embeddings and the two resampler heads jointly with
+the VLM, keeping all teacher encoders frozen,
+under the alignment loss $\mathcal{L}_{\mathrm{plan}}$ in
+Eq.~\eqref{eq:planner_loss}.
+After this stage, the semantic planner can predict text-grounded and
+spatial-aware foresight from a single observation.
+
+\paragraph{Stage 2: Semantic-Guided World Model Co-Training.}
+We then initialize the world model from a pretrained video diffusion model and
+connect it to the semantic planner through the gated fusion and cross-attention
+described in Sec.~\ref{sec:method_guidance}, so that training starts from the
+intact pretrained behavior.
+The semantic planner and the world model are optimized jointly with
+\begin{equation}
+    \mathcal{L}_{\mathrm{stage2}}
+    =
+    \mathcal{L}_{\mathrm{vid}}
+    +
+    \lambda_{\mathrm{plan}}\,\mathcal{L}_{\mathrm{plan}},
+    \label{eq:stage2_loss}
+\end{equation}
+where $\mathcal{L}_{\mathrm{vid}}$ is the video term of Eq.~\eqref{eq:gen_loss} and
+$\lambda_{\mathrm{plan}}$ weights the alignment term, which keeps the planner
+producing teacher-consistent foresight while adapting to generation.
+This stage lets the world model learn to exploit the foresight before gradients from the action loss are introduced.
+
+\paragraph{Stage 3: Semantic-Guided World-Action Co-Training.}
+Finally, we attach the action expert and optimize the planner, the world model,
+and the action expert together with
+\begin{equation}
+    \mathcal{L}
+    =
+    \mathcal{L}_{\mathrm{gen}}
+    +
+    \lambda_{\mathrm{plan}}\,\mathcal{L}_{\mathrm{plan}}.
+    \label{eq:total_loss}
+\end{equation}
+Crucially, all components are conditioned on the planner's own predictions
+rather than the teacher features, which matches deployment.
+
+\subsection{Closed-Loop Deployment}
+\label{sec:method_deploy}
+
+At deployment, the teacher encoders are discarded and \ourmethod runs as a
+closed-loop visuomotor controller.
+At each control cycle, the planner performs a single forward pass that produces
+the guidance for all $K$ keyframes and all camera views; conditioned on this
+guidance, the video and action experts jointly denoise the future frames and the
+action chunk with $10$ Euler steps of the flow-matching sampler, applying the
+semantic guidance at every step.
+The action chunk is expressed in the joint space of the robot, i.e., the
+joint and gripper commands of each arm.
+The robot executes only the first $8$ of the $H{=}36$ predicted actions, which
+the low-level joint controllers track, after which a new observation is captured
+and the policy re-plans in a receding-horizon manner.
+The planner and world-action forward passes are thus amortized over eight
+control steps, while frequent re-planning lets the policy correct tracking
+errors and react to changes in the scene.

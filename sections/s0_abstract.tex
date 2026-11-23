@@ -1,0 +1,11 @@
+% !TEX root = ../AnonymousSubmission2027.tex
+\begin{abstract}
+World-Action Models (WAMs) have emerged as a promising paradigm for robotic manipulation.
+However, most existing WAMs generate future videos and actions by relying mainly on visual cues rather than language instructions, since off-the-shelf text encoders embed instructions independently of visual observations.
+As a result, the videos predicted by these WAMs are often semantically misaligned with their corresponding language instructions, which degrades the accuracy of the predicted actions.
+To overcome this limitation, we propose \ourmethod, a semantic guidance method for world-action models that leverages a vision-language model (VLM) as a semantic planner to enhance the instruction-grounding capacity of world-action models.
+Specifically, we train a VLM-based planner to predict text-grounded and spatial-aware semantic foresight. 
+The text-grounded semantic foresight grounds the instruction by identifying the correct target objects, and the spatial-aware semantic foresight provides the scene geometry for precise manipulation.
+We then inject this foresight into the world-action model as high-level semantic guidance, ensuring that both future-video generation and action prediction faithfully follow the language instruction.
+Extensive experiments in simulation and the real world demonstrate the superiority of our semantic guidance method, showcasing precise manipulation and strong instruction-following capabilities.
+\end{abstract}

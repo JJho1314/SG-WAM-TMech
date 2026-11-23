@@ -1,0 +1,83 @@
+% !TEX root = main_tmech.tex
+\documentclass[journal]{IEEEtran}
+\bibliographystyle{IEEEtran}
+
+\usepackage{amsmath,amsfonts,amssymb,amsthm,mathtools,mathrsfs}
+\usepackage{nicefrac}
+\usepackage{dsfont}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage[caption=false,font=footnotesize,labelfont=rm,textfont=rm]{subfig}
+\usepackage{textcomp}
+\usepackage{stfloats}
+\usepackage[hyphens]{url}
+\usepackage{verbatim}
+\usepackage{graphicx}
+\usepackage{makecell}
+\usepackage{cite}
+\usepackage[table]{xcolor}
+\usepackage{colortbl}
+\usepackage{xspace}
+\usepackage{balance}
+\usepackage[colorlinks,
+linkcolor=blue,
+anchorcolor=blue,
+citecolor=blue]{hyperref}
+\usepackage{cleveref}
+
+\hyphenation{op-tical net-works semi-conduc-tor IEEE-Xplore}
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\input{macro}
+
+% Make \paragraph render as bold run-in heading without trailing colon (avoiding "Heading.:" in IEEEtran)
+\renewcommand{\paragraph}[1]{\par\vspace{0.35em}\noindent\textbf{#1}\quad}
+
+% Visible placeholder for information the authors still need to fill in.
+% Before submission, `grep -rn '\\TODO' .` must return only this definition.
+\newcommand{\TODO}[1]{\textcolor{red}{[TODO: #1]}}
+
+% Revision markup: text added or changed in response to reviewer comments
+% (REBUTTAL_TODO.md, "text-only" items). Remove the color before submission by
+% redefining as \newcommand{\rev}[1]{#1} and \newcommand{\revcolor}{}.
+\newcommand{\rev}[1]{\textcolor{red}{#1}}
+\newcommand{\revcolor}{\color{red}}
+
+\begin{document}
+\bstctlcite{IEEEexample:BSTcontrol}
+
+\title{SG-WAM: Text-Grounded and Spatial-Aware Semantic Guidance for World-Action Models}
+
+% Only the first two authors for now at the authors' request. Earlier draft
+% (from bio.tex, unconfirmed) for later:
+% \author{Junjie He, Junfeng Li, Wenjie Liu, Tianyu Huang, Shunbo Zhou,
+%         Jun Ma, Hesheng Wang, and~Haoang Li}
+\author{Junjie He and Junfeng Li}
+
+% Running headers for IEEE/ASME Transactions on Mechatronics (T-MECH)
+\markboth{IEEE/ASME Transactions on Mechatronics,~Vol.~XX, No.~XX, Month~2027}%
+{He and Li: SG-WAM: Text-Grounded and Spatial-Aware Semantic Guidance for World-Action Models}
+
+\maketitle
+
+\input{sections/s0_abstract}
+
+\begin{IEEEkeywords}
+World-action models, robotic manipulation, dual-arm robots, vision-language models, semantic guidance, embodied intelligence.
+\end{IEEEkeywords}
+
+\input{sections/s1_introduction}
+\input{sections/s2_relatedwork}
+\input{sections/s3_method}
+\input{sections/s4_experiments}
+\input{sections/s5_discussions}
+\input{sections/s6_conclusion}
+
+\bibliography{references}
+
+
+\end{document}
